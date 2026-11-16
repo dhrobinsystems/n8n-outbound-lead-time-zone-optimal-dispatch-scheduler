@@ -1,0 +1,1398 @@
+{
+  "name": "Outbound Lead Time-Zone Optimal Dispatch Scheduler (dhRobin Systems)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## n8n-outbound-lead-time-zone-optimal-dispatch-scheduler\n**dhRobin Systems** · Leads (webhook, queue or fixture) → timezone (IANA field → phone prefix → country/region → email ccTLD → fallback) → local time + weekday → **dispatch now** inside the local business window, otherwise the exact next `scheduled_dispatch_at` → dispatch webhook / queue update → Slack / webhook → audit.\n\n**Safe by default.** With no environment variables set:\n- `SANDBOX_MODE=true`: synthetic leads. **No external calls.**\n- `DRY_RUN=true` and `DISPATCH_ENABLED=false`: nothing is dispatched or written.",
+        "height": 380,
+        "width": 680,
+        "color": 5
+      },
+      "id": "80a2641e-f55f-5cbe-978f-d6426b1e76b1",
+      "name": "Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -640,
+        -520
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### Local-time rules\n- Window `BUSINESS_START_HOUR`–`BUSINESS_END_HOUR` in the **recipient's** zone (end exclusive, minus `END_BUFFER_MINUTES`).\n- Weekends skipped (`WEEKEND_DAYS`), Fri–Sat for IL / SA / QA / KW / BH / OM / EG with `REGIONAL_WEEKENDS`, `HOLIDAYS` by local date.\n- A due lead outside the window is **re-queued**, never sent late. DST-safe via Intl.",
+        "height": 230,
+        "width": 440,
+        "color": 6
+      },
+      "id": "33d557f1-eaea-55cb-bcb7-00036a8a0493",
+      "name": "Timezone Notice",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        -380
+      ]
+    },
+    {
+      "parameters": {
+        "content": "### Pinned synthetic payloads\nPinned: queue fetch, dispatch (1 batch), queue update, Slack, webhook.\nPins apply to **manual executions only**. Unpin a node before a manual live test.",
+        "height": 170,
+        "width": 380,
+        "color": 3
+      },
+      "id": "aaf96e59-467a-5f5f-bbf8-872f9d899210",
+      "name": "Pinned Data Notice",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1700,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "outbound/leads/schedule",
+        "responseMode": "onReceived",
+        "responseCode": 202,
+        "options": {}
+      },
+      "id": "8b689ed9-86bd-560a-91e7-d18e0d47ae21",
+      "name": "Inbound Lead Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -580,
+        60
+      ],
+      "webhookId": "145496ec-5bb7-5fbc-a3c0-36d20fd383b5",
+      "notes": "POST one lead, an array, or { leads: [...] }. Bearer or X-Webhook-Token.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "09e74dd5-8d82-5c74-85b0-c460f7b17e29",
+      "name": "Queue Evaluation Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -580,
+        240
+      ],
+      "notes": "Every 15 minutes: dispatch queued leads whose local window has opened.",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {},
+      "id": "0fc70a4c-7fe9-5568-9b8b-3fc99039b21f",
+      "name": "Manual Test Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -580,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6a7dd88f-07f5-52de-a62f-4df5a2083d96",
+              "name": "config.sandboxMode",
+              "value": "={{ String($env.SANDBOX_MODE ?? 'true').trim().toLowerCase() !== 'false' }}",
+              "type": "boolean"
+            },
+            {
+              "id": "4dd202e0-7f4c-50c0-a954-519143227bf1",
+              "name": "config.dryRun",
+              "value": "={{ String($env.DRY_RUN ?? 'true').trim().toLowerCase() !== 'false' }}",
+              "type": "boolean"
+            },
+            {
+              "id": "269f3db0-ad30-5ecc-87c2-91e2e01daac9",
+              "name": "config.dispatchEnabled",
+              "value": "={{ String($env.DISPATCH_ENABLED ?? 'false').trim().toLowerCase() === 'true' }}",
+              "type": "boolean"
+            },
+            {
+              "id": "7f88d082-2d0d-5aef-a948-ce92e4cba418",
+              "name": "config.queueWriteEnabled",
+              "value": "={{ !(String($env.SANDBOX_MODE ?? 'true').trim().toLowerCase() !== 'false') && !(String($env.DRY_RUN ?? 'true').trim().toLowerCase() !== 'false') && Boolean(String($env.QUEUE_UPDATE_URL ?? '').trim()) && String($env.QUEUE_WRITEBACK_ENABLED ?? 'true').trim().toLowerCase() !== 'false' }}",
+              "type": "boolean"
+            },
+            {
+              "id": "ced7ee57-c7ed-53cf-abda-00874d676df4",
+              "name": "config.notifyChannels",
+              "value": "={{ String($env.NOTIFY_CHANNELS ?? 'slack').toLowerCase().split(',').map(x => x.trim()).filter(x => ['slack', 'webhook'].includes(x)) }}",
+              "type": "array"
+            },
+            {
+              "id": "14f99844-5f98-5154-8b72-391339d181b0",
+              "name": "config.slackEnabled",
+              "value": "={{ !(String($env.SANDBOX_MODE ?? 'true').trim().toLowerCase() !== 'false') && String($env.NOTIFY_CHANNELS ?? 'slack').toLowerCase().split(',').map(x => x.trim()).filter(x => ['slack', 'webhook'].includes(x)).includes('slack') && Boolean(String($env.SLACK_WEBHOOK_URL ?? '').trim()) }}",
+              "type": "boolean"
+            },
+            {
+              "id": "1da034e5-c45e-5fe2-a0b1-361c5f37264f",
+              "name": "config.webhookEnabled",
+              "value": "={{ !(String($env.SANDBOX_MODE ?? 'true').trim().toLowerCase() !== 'false') && String($env.NOTIFY_CHANNELS ?? 'slack').toLowerCase().split(',').map(x => x.trim()).filter(x => ['slack', 'webhook'].includes(x)).includes('webhook') && Boolean(String($env.ALERT_WEBHOOK_URL ?? '').trim()) }}",
+              "type": "boolean"
+            },
+            {
+              "id": "ce4c848f-3ba5-59be-8b07-2d96dc6da63f",
+              "name": "config.notifyOnEveryRun",
+              "value": "={{ String($env.NOTIFY_ON_EVERY_RUN ?? 'false').trim().toLowerCase() === 'true' }}",
+              "type": "boolean"
+            },
+            {
+              "id": "1e1e0849-2b85-5f43-81ee-fae109009be9",
+              "name": "config.startMinutes",
+              "value": "={{ (() => { const m = /^(\\d{1,2})(?::(\\d{2}))?$/.exec(String($env.BUSINESS_START_HOUR ?? '').trim()); const x = m ? Number(m[1]) * 60 + Number(m[2] || 0) : 540; return x >= 0 && x <= 1440 && (!m || Number(m[2] || 0) < 60) ? x : 540; })() }}",
+              "type": "number"
+            },
+            {
+              "id": "5ac68e55-7303-5450-a526-067ae22fa2b9",
+              "name": "config.endMinutes",
+              "value": "={{ (() => { const m = /^(\\d{1,2})(?::(\\d{2}))?$/.exec(String($env.BUSINESS_END_HOUR ?? '').trim()); const x = m ? Number(m[1]) * 60 + Number(m[2] || 0) : 1020; return x >= 0 && x <= 1440 && (!m || Number(m[2] || 0) < 60) ? x : 1020; })() }}",
+              "type": "number"
+            },
+            {
+              "id": "31119502-0593-598d-89ed-5b74ef20d48e",
+              "name": "config.businessStart",
+              "value": "={{ (x => String(Math.floor(x / 60)).padStart(2, '0') + ':' + String(x % 60).padStart(2, '0'))((() => { const m = /^(\\d{1,2})(?::(\\d{2}))?$/.exec(String($env.BUSINESS_START_HOUR ?? '').trim()); const x = m ? Number(m[1]) * 60 + Number(m[2] || 0) : 540; return x >= 0 && x <= 1440 && (!m || Number(m[2] || 0) < 60) ? x : 540; })()) }}",
+              "type": "string"
+            },
+            {
+              "id": "3de9e111-d637-50b6-b5be-2028f1b3791e",
+              "name": "config.businessEnd",
+              "value": "={{ (x => String(Math.floor(x / 60)).padStart(2, '0') + ':' + String(x % 60).padStart(2, '0'))((() => { const m = /^(\\d{1,2})(?::(\\d{2}))?$/.exec(String($env.BUSINESS_END_HOUR ?? '').trim()); const x = m ? Number(m[1]) * 60 + Number(m[2] || 0) : 1020; return x >= 0 && x <= 1440 && (!m || Number(m[2] || 0) < 60) ? x : 1020; })()) }}",
+              "type": "string"
+            },
+            {
+              "id": "d58dade0-bbcf-51fe-bec6-58b861423f96",
+              "name": "config.endBufferMinutes",
+              "value": "={{ Math.min(240, Math.max(0, Number.isFinite(parseFloat($env.END_BUFFER_MINUTES)) ? Math.round(parseFloat($env.END_BUFFER_MINUTES)) : 0)) }}",
+              "type": "number"
+            },
+            {
+              "id": "00a5d1f8-0d30-52bc-b0dc-76c79f3f4599",
+              "name": "config.skipWeekends",
+              "value": "={{ String($env.SKIP_WEEKENDS ?? 'true').trim().toLowerCase() !== 'false' }}",
+              "type": "boolean"
+            },
+            {
+              "id": "00ea8f61-79d5-5152-b18b-9669feb038f9",
+              "name": "config.weekendDays",
+              "value": "={{ String($env.WEEKEND_DAYS ?? 'sat,sun').toLowerCase().split(',').map(x => ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'].indexOf(x.trim().slice(0, 3))).filter(x => x >= 0) }}",
+              "type": "array"
+            },
+            {
+              "id": "d2ab25e4-42de-5eaa-994a-f9335cdc04e0",
+              "name": "config.regionalWeekends",
+              "value": "={{ String($env.REGIONAL_WEEKENDS ?? 'true').trim().toLowerCase() !== 'false' }}",
+              "type": "boolean"
+            },
+            {
+              "id": "65de8bd9-9ff4-5b44-9a78-b2f47324445d",
+              "name": "config.holidays",
+              "value": "={{ String($env.HOLIDAYS ?? '').split(',').map(x => x.trim()).filter(x => /^\\d{4}-\\d{2}-\\d{2}$/.test(x)) }}",
+              "type": "array"
+            },
+            {
+              "id": "98741613-acf2-590c-8c15-6e1349d1a590",
+              "name": "config.fallbackTimezone",
+              "value": "={{ String($env.FALLBACK_TIMEZONE ?? 'America/New_York').trim() || 'America/New_York' }}",
+              "type": "string"
+            },
+            {
+              "id": "31933700-7af8-5043-ba90-a5b8c1cdfe92",
+              "name": "config.fallbackPolicy",
+              "value": "={{ ['use_fallback', 'hold'].includes(String($env.FALLBACK_POLICY ?? 'use_fallback').trim().toLowerCase()) ? String($env.FALLBACK_POLICY ?? 'use_fallback').trim().toLowerCase() : 'use_fallback' }}",
+              "type": "string"
+            },
+            {
+              "id": "27356f2d-7b17-51da-ba12-ac99b0022a19",
+              "name": "config.spreadMinutes",
+              "value": "={{ Math.min(240, Math.max(0, Number.isFinite(parseFloat($env.SPREAD_MINUTES)) ? Math.round(parseFloat($env.SPREAD_MINUTES)) : 0)) }}",
+              "type": "number"
+            },
+            {
+              "id": "804a29b1-4793-5349-abf5-d13186cd4d7e",
+              "name": "config.dispatchBatchSize",
+              "value": "={{ Math.min(500, Math.max(1, Number.isFinite(parseFloat($env.DISPATCH_BATCH_SIZE)) ? Math.round(parseFloat($env.DISPATCH_BATCH_SIZE)) : 50)) }}",
+              "type": "number"
+            },
+            {
+              "id": "44db2fc5-fbfe-54fc-8ced-e0d1b2f9091d",
+              "name": "config.maxLeadsPerRun",
+              "value": "={{ Math.min(5000, Math.max(1, Number.isFinite(parseFloat($env.MAX_LEADS_PER_RUN)) ? Math.round(parseFloat($env.MAX_LEADS_PER_RUN)) : 500)) }}",
+              "type": "number"
+            },
+            {
+              "id": "49641887-85b6-521e-bdd4-efea781113fd",
+              "name": "config.dedupeHours",
+              "value": "={{ Math.min(720, Math.max(1, Number.isFinite(parseFloat($env.DEDUPE_HOURS)) ? Math.round(parseFloat($env.DEDUPE_HOURS)) : 24)) }}",
+              "type": "number"
+            },
+            {
+              "id": "d3be5d71-e54f-5d29-8c65-91036456db74",
+              "name": "config.requireWebhookToken",
+              "value": "={{ String($env.REQUIRE_WEBHOOK_TOKEN ?? 'true').trim().toLowerCase() !== 'false' }}",
+              "type": "boolean"
+            },
+            {
+              "id": "61209c90-d365-530c-8596-9f668b902b51",
+              "name": "config.nowOverride",
+              "value": "={{ (String($env.SANDBOX_MODE ?? 'true').trim().toLowerCase() !== 'false') || (String($env.DRY_RUN ?? 'true').trim().toLowerCase() !== 'false') ? String($env.EVALUATION_TIME_OVERRIDE ?? '').trim() : '' }}",
+              "type": "string"
+            },
+            {
+              "id": "c991175f-8097-5279-893c-2ba301c10189",
+              "name": "config.runId",
+              "value": "={{ $execution.id }}",
+              "type": "string"
+            },
+            {
+              "id": "645e0c5b-6c25-51c1-8a2c-f821a0d4c153",
+              "name": "config.executionMode",
+              "value": "={{ $execution.mode }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "732713ac-95e1-52cf-a044-53abf472beb5",
+      "name": "Config & Safety Gate",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -360,
+        240
+      ],
+      "notes": "Typed, non-secret configuration under config.*. Channel flags record only whether an endpoint is set.",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "4c5948e8-3c96-58bd-be6c-5ce408489985",
+              "leftValue": "={{ $('Inbound Lead Webhook').isExecuted }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c1cfbb35-17fc-5c47-9f7b-3e04c05e1313",
+      "name": "From Webhook?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -140,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "1cad86b6-c6f9-595d-a89a-8d6bf1503ac3",
+              "leftValue": "={{ $('Config & Safety Gate').first().json.config.sandboxMode }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a675ca5b-0dd3-5c9f-a689-3a0e92ea4608",
+      "name": "Sandbox Mode?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        80,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.QUEUE_API_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.CRM_API_KEY }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "pending"
+            },
+            {
+              "name": "due_before",
+              "value": "={{ new Date().toISOString() }}"
+            },
+            {
+              "name": "limit",
+              "value": "={{ $('Config & Safety Gate').first().json.config.maxLeadsPerRun }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "08e9c81b-51d0-516b-8308-e707cd4f43a7",
+      "name": "Queue: Fetch Pending Leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        300,
+        420
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "notes": "Queue contract: README §8.2.",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─────────────────────────────────────────────────────────────────────────────\n// Load & Normalize Leads\n// Sources, in order:\n//   webhook  → body of \"Inbound Lead Webhook\" (shared-token check outside sandbox)\n//   sandbox  → embedded fixture (= sample-payloads/queued-leads.json)\n//   queue    → response of \"Queue: Fetch Pending Leads\"\n// Validates lead_id, drops do-not-contact leads, de-duplicates, caps the batch\n// and, in production executions, skips leads dispatched within DEDUPE_HOURS.\n//\n// Security note: WEBHOOK_SHARED_TOKEN is read here only because n8n's built-in\n// webhook header auth needs a stored credential. The value never leaves this\n// node and is compared in constant time.\n// ─────────────────────────────────────────────────────────────────────────────\nconst cfg = $('Config & Safety Gate').first().json.config;\nconst FIXTURE = {\n  \"_comment\": \"Synthetic fixture. All names, emails, phone numbers and IDs are fictitious; phone numbers use ranges reserved for fiction (NANP 555-01xx, UK 020 7946 0xxx, AU 02 5550 xxxx). Shape documented in README \\u00a78.2.\",\n  \"leads\": [\n    {\n      \"lead_id\": \"lead_id_1001\",\n      \"first_name\": \"Alex\",\n      \"email\": \"alex.rivera@example.com\",\n      \"phone\": \"+1-202-555-0148\",\n      \"channel\": \"email\",\n      \"payload\": {\n        \"sequence_id\": \"seq_demo_01\"\n      }\n    },\n    {\n      \"lead_id\": \"lead_id_1002\",\n      \"first_name\": \"Jordan\",\n      \"email\": \"jordan.lee@example.com\",\n      \"phone\": \"+1 (415) 555-0123\",\n      \"channel\": \"phone\",\n      \"payload\": {\n        \"sequence_id\": \"seq_demo_01\"\n      }\n    },\n    {\n      \"lead_id\": \"lead_id_1003\",\n      \"first_name\": \"Priya\",\n      \"email\": \"priya.shah@example.co.uk\",\n      \"phone\": \"+44-20-7946-0921\",\n      \"channel\": \"email\",\n      \"payload\": {\n        \"sequence_id\": \"seq_demo_02\"\n      }\n    },\n    {\n      \"lead_id\": \"lead_id_1004\",\n      \"first_name\": \"Sam\",\n      \"email\": \"sam.taylor@example.com.au\",\n      \"phone\": \"+61 2 5550 1234\",\n      \"channel\": \"email\",\n      \"payload\": {\n        \"sequence_id\": \"seq_demo_02\"\n      }\n    },\n    {\n      \"lead_id\": \"lead_id_1005\",\n      \"first_name\": \"Morgan\",\n      \"email\": \"morgan.quinn@example.com\",\n      \"channel\": \"email\",\n      \"payload\": {\n        \"sequence_id\": \"seq_demo_03\"\n      }\n    },\n    {\n      \"lead_id\": \"lead_id_1006\",\n      \"first_name\": \"Kenji\",\n      \"email\": \"kenji.sato@example.com\",\n      \"timezone\": \"Asia/Tokyo\",\n      \"channel\": \"email\",\n      \"payload\": {\n        \"sequence_id\": \"seq_demo_03\"\n      }\n    },\n    {\n      \"lead_id\": \"lead_id_1007\",\n      \"first_name\": \"Lena\",\n      \"email\": \"lena.vogel@example.de\",\n      \"timezone\": \"Mars/Olympus_Mons\",\n      \"channel\": \"email\",\n      \"payload\": {\n        \"sequence_id\": \"seq_demo_03\"\n      }\n    },\n    {\n      \"lead_id\": \"lead_id_1008\",\n      \"first_name\": \"Casey\",\n      \"email\": \"casey.brooks@example.com\",\n      \"phone\": \"+1-999-555-0100\",\n      \"country\": \"US\",\n      \"region\": \"CO\",\n      \"channel\": \"phone\",\n      \"payload\": {\n        \"sequence_id\": \"seq_demo_04\"\n      }\n    },\n    {\n      \"lead_id\": \"lead_id_1009\",\n      \"first_name\": \"Noor\",\n      \"email\": \"noor.haddad@example.com\",\n      \"country\": \"SA\",\n      \"channel\": \"email\",\n      \"payload\": {\n        \"sequence_id\": \"seq_demo_04\"\n      }\n    },\n    {\n      \"lead_id\": \"lead_id_1010\",\n      \"first_name\": \"Riley\",\n      \"email\": \"riley.ford@example.com\",\n      \"phone\": \"+1-312-555-0177\",\n      \"channel\": \"email\",\n      \"do_not_contact\": true,\n      \"payload\": {\n        \"sequence_id\": \"seq_demo_04\"\n      }\n    },\n    {\n      \"lead_id\": \"lead_id_1001\",\n      \"first_name\": \"Alex\",\n      \"email\": \"alex.rivera@example.com\",\n      \"phone\": \"+1-202-555-0148\",\n      \"channel\": \"email\",\n      \"payload\": {\n        \"sequence_id\": \"seq_demo_01\"\n      }\n    },\n    {\n      \"first_name\": \"NoId\",\n      \"email\": \"no.id@example.com\",\n      \"channel\": \"email\"\n    }\n  ]\n};\nconst fromWebhook = $('Inbound Lead Webhook').isExecuted;\n\nlet raw = [];\nlet source;\nlet auth = 'not_applicable';\nif (fromWebhook) {\n  source = 'webhook';\n  const req = $('Inbound Lead Webhook').first().json;\n  if (!cfg.sandboxMode && cfg.requireWebhookToken) {\n    let crypto;\n    try { crypto = require('crypto'); } catch (e) { throw new Error('Webhook token check needs NODE_FUNCTION_ALLOW_BUILTIN=crypto.'); }\n    let expected = '';\n    try { expected = String($env.WEBHOOK_SHARED_TOKEN || ''); } catch (e) { expected = ''; }\n    if (!expected) throw new Error('Rejected: WEBHOOK_SHARED_TOKEN is not set and REQUIRE_WEBHOOK_TOKEN is not false.');\n    const h = Object.fromEntries(Object.entries(req.headers || {}).map(([k, v]) => [k.toLowerCase(), String(v)]));\n    const got = (h.authorization || '').replace(/^Bearer\\s+/i, '') || h['x-webhook-token'] || '';\n    const a = crypto.createHash('sha256').update(got).digest();\n    const b = crypto.createHash('sha256').update(expected).digest();\n    if (!got || !crypto.timingSafeEqual(a, b)) throw new Error('Rejected: missing or invalid webhook token.');\n    auth = 'verified';\n  } else auth = cfg.sandboxMode ? 'skipped (sandbox)' : 'disabled (REQUIRE_WEBHOOK_TOKEN=false)';\n  const body = req.body;\n  raw = Array.isArray(body) ? body : Array.isArray(body?.leads) ? body.leads : (body && typeof body === 'object' ? [body] : []);\n} else if (cfg.sandboxMode) {\n  source = 'fixture';\n  raw = FIXTURE.leads;\n} else {\n  source = 'queue';\n  const resp = $('Queue: Fetch Pending Leads').all().map((i) => i.json);\n  if (resp.length === 1 && resp[0].error) throw new Error(`Queue read failed: ${JSON.stringify(resp[0].error).slice(0, 200)}`);\n  raw = resp.flatMap((j) => (Array.isArray(j.leads) ? j.leads : Array.isArray(j.data) ? j.data : (j.lead_id || j.id ? [j] : [])));\n}\n\nlet store = null;\ntry { store = $getWorkflowStaticData('global'); } catch (e) { store = null; }\nconst persist = Boolean(store) && !cfg.sandboxMode && cfg.executionMode === 'production';\nconst recent = persist ? (store.dispatched || {}) : {};\nif (persist) for (const [k, t] of Object.entries(recent)) if (Date.now() - t > cfg.dedupeHours * 3600000) delete recent[k];\n\nconst s = (v, n = 200) => (v === undefined || v === null ? null : String(v).trim().slice(0, n) || null);\nconst seen = new Set();\nconst leads = [];\nconst rejected = [];\nfor (const r of raw) {\n  const leadId = s(r?.lead_id ?? r?.id, 100);\n  if (!leadId) { rejected.push({ leadId: null, reason: 'missing_lead_id' }); continue; }\n  if (seen.has(leadId)) { rejected.push({ leadId, reason: 'duplicate_in_batch' }); continue; }\n  seen.add(leadId);\n  if (r.do_not_contact === true || String(r.do_not_contact).toLowerCase() === 'true') { rejected.push({ leadId, reason: 'do_not_contact' }); continue; }\n  if (recent[leadId]) { rejected.push({ leadId, reason: 'recently_dispatched' }); continue; }\n  if (!s(r.email) && !s(r.phone)) { rejected.push({ leadId, reason: 'no_contact_point' }); continue; }\n  if (leads.length >= cfg.maxLeadsPerRun) { rejected.push({ leadId, reason: 'over_max_leads_per_run' }); continue; }\n  leads.push({\n    leadId,\n    email: s(r.email)?.toLowerCase() || null,\n    phone: s(r.phone, 40),\n    timezone: s(r.timezone ?? r.time_zone ?? r.tz, 64),\n    country: s(r.country ?? r.country_code, 3)?.toUpperCase() || null,\n    region: s(r.region ?? r.state, 40)?.toUpperCase() || null,\n    channel: s(r.channel, 20)?.toLowerCase() || 'email',\n    scheduledDispatchAt: s(r.scheduled_dispatch_at, 40),\n    payload: r.payload && typeof r.payload === 'object' ? r.payload : {},\n  });\n}\nreturn [{ json: { source, auth, received: raw.length, count: leads.length, leads, rejected } }];\n"
+      },
+      "id": "20138da9-b7e4-5a31-ad1f-8ecfaf09ebe2",
+      "name": "Load & Normalize Leads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        240
+      ],
+      "notes": "Webhook token check, validation, DNC, de-duplication.",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "6755b55f-bfcc-5d2d-9903-5298f3089135",
+              "leftValue": "={{ $json.count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "4599934e-1121-521a-9319-c1bc990d57a1",
+      "name": "Has Leads?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        740,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─────────────────────────────────────────────────────────────────────────────\n// Timezone Resolution & Business-Hours Evaluation\n// Resolution hierarchy (first hit wins), with confidence:\n//   1. explicit IANA field (timezone / time_zone / tz), validated by Intl  high\n//   2. phone: NANP area code (+1), or a single-zone country calling code,\n//      or an Australian / Brazilian / Mexican area prefix                  high/medium\n//   3. country (+ region/state for US, CA, AU, BR, MX) fields              medium\n//   4. email domain ccTLD (generic TLDs such as .com are skipped)           low\n//   5. FALLBACK_TIMEZONE (FALLBACK_POLICY=use_fallback) or hold             fallback\n// Then computes the recipient's local time and weekday, decides whether the\n// lead is inside the business window now, and otherwise the exact next valid\n// scheduled_dispatch_at (UTC ISO), DST-safe, honouring weekend days, regional\n// Fri–Sat weekends, holidays and an optional deterministic spread.\n// Uses only the built-in Intl API; no packages.\n// ─────────────────────────────────────────────────────────────────────────────\nconst cfg = $('Config & Safety Gate').first().json.config;\nconst { leads } = $input.first().json;\nif (!(cfg.startMinutes < cfg.endMinutes - cfg.endBufferMinutes)) throw new Error(`Invalid business window ${cfg.businessStart}–${cfg.businessEnd} (END_BUFFER_MINUTES=${cfg.endBufferMinutes}). BUSINESS_START_HOUR must be earlier than BUSINESS_END_HOUR.`);\n// EVALUATION_TIME_OVERRIDE is honoured only in sandbox or dry run (see Config).\nconst NOW = cfg.nowOverride && Number.isFinite(Date.parse(cfg.nowOverride)) ? Date.parse(cfg.nowOverride) : Date.now();\n\n// ── Reference tables ──\nconst NANP_BY_ZONE = {\n  'America/New_York': '201 202 203 207 212 215 216 220 223 229 231 234 239 240 248 252 267 272 276 301 302 304 305 313 315 321 330 332 336 339 347 351 352 380 386 401 404 407 410 412 413 419 423 434 440 443 445 470 475 478 484 508 513 516 517 518 540 551 561 567 570 571 585 586 603 607 609 610 614 616 617 631 646 667 678 680 689 703 704 706 716 717 718 724 727 732 734 740 754 757 762 770 772 774 781 786 802 803 804 810 813 814 828 835 843 845 848 856 857 859 860 862 863 864 865 878 904 908 910 914 917 919 929 934 937 941 947 954 959 973 978 980 984 989',\n  'America/Toronto': '226 249 289 343 365 416 418 437 438 450 514 519 548 579 581 613 647 705 819 873 905',\n  'America/Chicago': '205 210 214 217 218 224 225 251 254 256 262 281 309 312 314 316 318 319 320 331 334 337 346 361 409 414 417 430 432 469 479 501 504 507 512 515 563 573 601 608 612 615 618 620 630 636 641 651 660 662 682 708 712 713 715 726 731 737 763 769 773 779 785 815 816 817 830 832 847 870 872 901 903 920 936 940 952 956 972 979 985',\n  'America/Winnipeg': '204 431',\n  'America/Regina': '306 639',\n  'America/Denver': '303 307 385 406 435 505 575 719 720 801 915 970',\n  'America/Boise': '208 986',\n  'America/Edmonton': '368 403 587 780 825',\n  'America/Phoenix': '480 520 602 623 928',\n  'America/Los_Angeles': '206 209 213 253 310 323 341 360 408 415 424 425 442 503 509 510 530 541 559 562 619 626 628 650 657 661 669 702 707 714 725 747 760 775 805 818 820 831 858 909 916 925 949 951 971',\n  'America/Vancouver': '236 250 604 672 778',\n  'America/Halifax': '506 782 902',\n  'America/St_Johns': '709',\n  'America/Anchorage': '907',\n  'Pacific/Honolulu': '808',\n  'America/Puerto_Rico': '787 939',\n};\nconst NANP = {};\nfor (const [z, codes] of Object.entries(NANP_BY_ZONE)) for (const c of codes.split(' ')) NANP[c] = z;\n\n// Calling codes → zone for single-zone countries (and practical defaults).\nconst CC = {\n  44: 'Europe/London', 353: 'Europe/Dublin', 33: 'Europe/Paris', 49: 'Europe/Berlin', 34: 'Europe/Madrid', 39: 'Europe/Rome',\n  31: 'Europe/Amsterdam', 32: 'Europe/Brussels', 41: 'Europe/Zurich', 43: 'Europe/Vienna', 45: 'Europe/Copenhagen', 46: 'Europe/Stockholm',\n  47: 'Europe/Oslo', 358: 'Europe/Helsinki', 48: 'Europe/Warsaw', 351: 'Europe/Lisbon', 30: 'Europe/Athens', 420: 'Europe/Prague',\n  36: 'Europe/Budapest', 40: 'Europe/Bucharest', 352: 'Europe/Luxembourg', 354: 'Atlantic/Reykjavik', 90: 'Europe/Istanbul',\n  972: 'Asia/Jerusalem', 971: 'Asia/Dubai', 966: 'Asia/Riyadh', 974: 'Asia/Qatar', 965: 'Asia/Kuwait', 973: 'Asia/Bahrain', 968: 'Asia/Muscat',\n  91: 'Asia/Kolkata', 92: 'Asia/Karachi', 880: 'Asia/Dhaka', 94: 'Asia/Colombo', 65: 'Asia/Singapore', 852: 'Asia/Hong_Kong',\n  81: 'Asia/Tokyo', 82: 'Asia/Seoul', 86: 'Asia/Shanghai', 886: 'Asia/Taipei', 63: 'Asia/Manila', 66: 'Asia/Bangkok',\n  84: 'Asia/Ho_Chi_Minh', 60: 'Asia/Kuala_Lumpur', 64: 'Pacific/Auckland', 27: 'Africa/Johannesburg', 234: 'Africa/Lagos',\n  254: 'Africa/Nairobi', 20: 'Africa/Cairo', 212: 'Africa/Casablanca', 57: 'America/Bogota', 56: 'America/Santiago',\n  54: 'America/Argentina/Buenos_Aires', 51: 'America/Lima', 506: 'America/Costa_Rica', 507: 'America/Panama',\n};\nconst ISO = {\n  GB: 'Europe/London', UK: 'Europe/London', IE: 'Europe/Dublin', FR: 'Europe/Paris', DE: 'Europe/Berlin', ES: 'Europe/Madrid', IT: 'Europe/Rome',\n  NL: 'Europe/Amsterdam', BE: 'Europe/Brussels', CH: 'Europe/Zurich', AT: 'Europe/Vienna', DK: 'Europe/Copenhagen', SE: 'Europe/Stockholm',\n  NO: 'Europe/Oslo', FI: 'Europe/Helsinki', PL: 'Europe/Warsaw', PT: 'Europe/Lisbon', GR: 'Europe/Athens', CZ: 'Europe/Prague',\n  HU: 'Europe/Budapest', RO: 'Europe/Bucharest', LU: 'Europe/Luxembourg', IS: 'Atlantic/Reykjavik', TR: 'Europe/Istanbul',\n  IL: 'Asia/Jerusalem', AE: 'Asia/Dubai', SA: 'Asia/Riyadh', QA: 'Asia/Qatar', KW: 'Asia/Kuwait', BH: 'Asia/Bahrain', OM: 'Asia/Muscat',\n  IN: 'Asia/Kolkata', PK: 'Asia/Karachi', BD: 'Asia/Dhaka', LK: 'Asia/Colombo', SG: 'Asia/Singapore', HK: 'Asia/Hong_Kong',\n  JP: 'Asia/Tokyo', KR: 'Asia/Seoul', CN: 'Asia/Shanghai', TW: 'Asia/Taipei', PH: 'Asia/Manila', TH: 'Asia/Bangkok',\n  VN: 'Asia/Ho_Chi_Minh', MY: 'Asia/Kuala_Lumpur', NZ: 'Pacific/Auckland', ZA: 'Africa/Johannesburg', NG: 'Africa/Lagos',\n  KE: 'Africa/Nairobi', EG: 'Africa/Cairo', MA: 'Africa/Casablanca', CO: 'America/Bogota', CL: 'America/Santiago',\n  AR: 'America/Argentina/Buenos_Aires', PE: 'America/Lima', CR: 'America/Costa_Rica', PA: 'America/Panama', PR: 'America/Puerto_Rico',\n};\nconst REGION = {\n  US: {\n    'America/New_York': 'CT DE DC FL GA IN KY ME MD MA MI NH NJ NY NC OH PA RI SC VT VA WV',\n    'America/Chicago': 'AL AR IL IA KS LA MN MS MO NE ND OK SD TN TX WI',\n    'America/Denver': 'CO MT NM UT WY', 'America/Boise': 'ID', 'America/Phoenix': 'AZ',\n    'America/Los_Angeles': 'CA NV OR WA', 'America/Anchorage': 'AK', 'Pacific/Honolulu': 'HI',\n  },\n  CA: { 'America/Toronto': 'ON QC', 'America/Vancouver': 'BC', 'America/Edmonton': 'AB', 'America/Winnipeg': 'MB', 'America/Regina': 'SK', 'America/Halifax': 'NS NB PE', 'America/St_Johns': 'NL' },\n  AU: { 'Australia/Sydney': 'NSW ACT', 'Australia/Melbourne': 'VIC', 'Australia/Brisbane': 'QLD', 'Australia/Adelaide': 'SA', 'Australia/Perth': 'WA', 'Australia/Hobart': 'TAS', 'Australia/Darwin': 'NT' },\n  MX: { 'America/Mexico_City': 'CDMX DF MEX JAL NLE PUE GUA VER QRO', 'America/Tijuana': 'BC BCN', 'America/Cancun': 'ROO QR' },\n  BR: { 'America/Sao_Paulo': 'SP RJ MG ES PR SC RS DF GO BA', 'America/Manaus': 'AM' },\n};\nconst TLD = {\n  uk: 'Europe/London', ie: 'Europe/Dublin', fr: 'Europe/Paris', de: 'Europe/Berlin', es: 'Europe/Madrid', it: 'Europe/Rome', nl: 'Europe/Amsterdam',\n  be: 'Europe/Brussels', ch: 'Europe/Zurich', at: 'Europe/Vienna', dk: 'Europe/Copenhagen', se: 'Europe/Stockholm', no: 'Europe/Oslo', fi: 'Europe/Helsinki',\n  pl: 'Europe/Warsaw', pt: 'Europe/Lisbon', gr: 'Europe/Athens', cz: 'Europe/Prague', hu: 'Europe/Budapest', ro: 'Europe/Bucharest', il: 'Asia/Jerusalem',\n  ae: 'Asia/Dubai', sa: 'Asia/Riyadh', in: 'Asia/Kolkata', pk: 'Asia/Karachi', bd: 'Asia/Dhaka', sg: 'Asia/Singapore', hk: 'Asia/Hong_Kong', jp: 'Asia/Tokyo',\n  kr: 'Asia/Seoul', cn: 'Asia/Shanghai', tw: 'Asia/Taipei', ph: 'Asia/Manila', th: 'Asia/Bangkok', vn: 'Asia/Ho_Chi_Minh', my: 'Asia/Kuala_Lumpur',\n  nz: 'Pacific/Auckland', za: 'Africa/Johannesburg', ng: 'Africa/Lagos', ke: 'Africa/Nairobi', eg: 'Africa/Cairo', cl: 'America/Santiago',\n  ar: 'America/Argentina/Buenos_Aires', pe: 'America/Lima',\n  // multi-zone countries: most populous zone, low confidence\n  au: 'Australia/Sydney', ca: 'America/Toronto', br: 'America/Sao_Paulo', mx: 'America/Mexico_City',\n};\n// Countries whose business week is Sunday–Thursday (weekend Friday–Saturday).\nconst FRI_SAT = new Set(['Asia/Jerusalem', 'Asia/Riyadh', 'Asia/Qatar', 'Asia/Kuwait', 'Asia/Bahrain', 'Asia/Muscat', 'Africa/Cairo']);\n\n// ── Helpers ──\nconst valid = (tz) => { if (!tz) return false; try { new Intl.DateTimeFormat('en-US', { timeZone: tz }).format(0); return true; } catch (e) { return false; } };\nconst fmtCache = {};\nconst parts = (ms, tz) => {\n  const f = fmtCache[tz] || (fmtCache[tz] = new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', weekday: 'short' }));\n  const o = {};\n  for (const p of f.formatToParts(new Date(ms))) o[p.type] = p.value;\n  return { y: +o.year, m: +o.month, d: +o.day, h: +o.hour % 24, mi: +o.minute, s: +o.second, wd: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(o.weekday) };\n};\nconst offsetMs = (ms, tz) => { const p = parts(ms, tz); return Date.UTC(p.y, p.m - 1, p.d, p.h, p.mi, p.s) - Math.floor(ms / 1000) * 1000; };\n// Wall-clock time in tz → UTC ms (two-pass, correct across DST changes).\nconst zonedToUtc = (y, m, d, h, mi, tz) => {\n  const guess = Date.UTC(y, m - 1, d, h, mi);\n  let t = guess - offsetMs(guess, tz);\n  const o2 = offsetMs(t, tz);\n  t = guess - o2;\n  return t;\n};\nconst fmtOffset = (ms, tz) => { const o = Math.round(offsetMs(ms, tz) / 60000); const s = o < 0 ? '-' : '+'; const a = Math.abs(o); return `${s}${String(Math.floor(a / 60)).padStart(2, '0')}:${String(a % 60).padStart(2, '0')}`; };\nconst localIso = (ms, tz) => { const p = parts(ms, tz); const pad = (n) => String(n).padStart(2, '0'); return `${p.y}-${pad(p.m)}-${pad(p.d)}T${pad(p.h)}:${pad(p.mi)}:${pad(p.s)}${fmtOffset(ms, tz)}`; };\nconst hash = (s) => { let h = 2166136261; for (const ch of String(s)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; };\nconst DAY = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];\n\nfunction resolve(l) {\n  const tried = [];\n  if (l.timezone) {\n    if (valid(l.timezone)) return { tz: l.timezone, method: 'explicit_iana', confidence: 'high', tried };\n    tried.push(`explicit_iana_invalid:${l.timezone}`);\n  }\n  if (l.phone) {\n    let digits = String(l.phone).replace(/[^\\d+]/g, '');\n    if (digits.startsWith('00')) digits = `+${digits.slice(2)}`;\n    if (digits.startsWith('+')) {\n      const n = digits.slice(1);\n      if (n.startsWith('1') && n.length === 11) {\n        const ac = n.slice(1, 4);\n        if (NANP[ac]) return { tz: NANP[ac], method: `phone_nanp_area_code:${ac}`, confidence: 'high', tried };\n        tried.push(`phone_nanp_unknown_area_code:${ac}`);\n      } else if (n.startsWith('61')) {\n        const a = n.slice(2, 3);\n        const z = { 2: 'Australia/Sydney', 3: 'Australia/Melbourne', 7: 'Australia/Brisbane' }[a];\n        if (z) return { tz: z, method: `phone_au_area:${a}`, confidence: 'medium', tried };\n        tried.push(`phone_au_ambiguous:${a === '4' ? 'mobile' : a}`);\n      } else if (n.startsWith('55')) {\n        const a = Number(n.slice(2, 3));\n        if (a >= 1 && a <= 5) return { tz: 'America/Sao_Paulo', method: `phone_br_area:${n.slice(2, 4)}`, confidence: 'medium', tried };\n        tried.push('phone_br_ambiguous');\n      } else if (n.startsWith('52')) {\n        return { tz: 'America/Mexico_City', method: 'phone_mx_default', confidence: 'medium', tried };\n      } else {\n        const cc = [3, 2, 1].map((k) => n.slice(0, k)).find((k) => CC[k]);\n        if (cc) return { tz: CC[cc], method: `phone_country_code:+${cc}`, confidence: 'high', tried };\n        tried.push(`phone_country_unmapped:+${n.slice(0, 3)}`);\n      }\n    } else tried.push('phone_not_e164');\n  }\n  if (l.country) {\n    const reg = REGION[l.country];\n    if (reg && l.region) {\n      for (const [z, list] of Object.entries(reg)) if (list.split(' ').includes(l.region)) return { tz: z, method: `country_region:${l.country}-${l.region}`, confidence: 'medium', tried };\n      tried.push(`region_unmapped:${l.country}-${l.region}`);\n    } else if (reg) tried.push(`country_multi_zone_without_region:${l.country}`);\n    else if (ISO[l.country]) return { tz: ISO[l.country], method: `country:${l.country}`, confidence: 'medium', tried };\n    else tried.push(`country_unmapped:${l.country}`);\n  }\n  if (l.email && l.email.includes('@')) {\n    const tld = l.email.split('@')[1].split('.').pop();\n    if (TLD[tld]) return { tz: TLD[tld], method: `email_cctld:.${tld}`, confidence: 'low', tried };\n    tried.push(`email_tld_generic:.${tld}`);\n  }\n  return { tz: null, method: 'unresolved', confidence: 'none', tried };\n}\n\nfunction weekendFor(tz) { return cfg.regionalWeekends && FRI_SAT.has(tz) ? new Set([5, 6]) : new Set(cfg.weekendDays); }\nfunction isBusinessDay(p, tz) {\n  if (cfg.skipWeekends && weekendFor(tz).has(p.wd)) return false;\n  const key = `${p.y}-${String(p.m).padStart(2, '0')}-${String(p.d).padStart(2, '0')}`;\n  return !cfg.holidays.includes(key);\n}\nconst endMin = () => cfg.endMinutes - cfg.endBufferMinutes;\n\nfunction evaluate(tz, leadId) {\n  const p = parts(NOW, tz);\n  const nowMin = p.h * 60 + p.mi;\n  const local = { localTime: localIso(NOW, tz), weekday: DAY[p.wd], utcOffset: fmtOffset(NOW, tz) };\n  if (isBusinessDay(p, tz) && nowMin >= cfg.startMinutes && nowMin < endMin()) return { inWindow: true, ...local, scheduledDispatchAt: new Date(NOW).toISOString(), reason: 'inside_business_hours' };\n  // Next valid slot: today if before the window on a business day, else the next business day.\n  let why = !isBusinessDay(p, tz) ? (cfg.holidays.includes(`${p.y}-${String(p.m).padStart(2, '0')}-${String(p.d).padStart(2, '0')}`) ? 'holiday' : 'weekend') : nowMin < cfg.startMinutes ? 'before_business_hours' : 'after_business_hours';\n  const spread = cfg.spreadMinutes > 0 ? hash(leadId) % Math.max(1, Math.min(cfg.spreadMinutes, endMin() - cfg.startMinutes)) : 0;\n  for (let add = 0; add <= 14; add += 1) {\n    // Date arithmetic on the local calendar date (UTC used as a neutral calendar).\n    const cal = new Date(Date.UTC(p.y, p.m - 1, p.d + add));\n    const y = cal.getUTCFullYear(); const m = cal.getUTCMonth() + 1; const d = cal.getUTCDate();\n    const startMs = zonedToUtc(y, m, d, Math.floor(cfg.startMinutes / 60), cfg.startMinutes % 60, tz) + spread * 60000;\n    if (startMs <= NOW) continue;\n    const q = parts(startMs, tz);\n    if (!isBusinessDay(q, tz)) continue;\n    return { inWindow: false, ...local, scheduledDispatchAt: new Date(startMs).toISOString(), scheduledLocal: localIso(startMs, tz), waitMinutes: Math.round((startMs - NOW) / 60000), reason: why };\n  }\n  return { inWindow: false, ...local, scheduledDispatchAt: null, reason: 'no_business_day_within_14_days' };\n}\n\nconst evaluated = leads.map((l) => {\n  const r = resolve(l);\n  let tz = r.tz; let method = r.method; let confidence = r.confidence;\n  if (!tz) {\n    if (cfg.fallbackPolicy === 'hold' || !valid(cfg.fallbackTimezone)) {\n      return { ...l, resolvedTimezone: null, resolution: { method, confidence, tried: r.tried }, decision: 'hold', reason: 'timezone_unresolved', scheduledDispatchAt: null };\n    }\n    tz = cfg.fallbackTimezone; method = 'fallback_timezone'; confidence = 'fallback';\n  }\n  const e = evaluate(tz, l.leadId);\n  return {\n    ...l,\n    resolvedTimezone: tz,\n    resolution: { method, confidence, tried: r.tried },\n    ...e,\n    decision: e.inWindow ? 'dispatch_now' : e.scheduledDispatchAt ? 'defer' : 'hold',\n  };\n});\nconst counts = { leads: evaluated.length, dispatch_now: 0, defer: 0, hold: 0 };\nfor (const x of evaluated) counts[x.decision] += 1;\nreturn [{ json: { evaluatedAt: new Date(NOW).toISOString(), window: { start: cfg.businessStart, end: cfg.businessEnd, endBufferMinutes: cfg.endBufferMinutes, skipWeekends: cfg.skipWeekends }, counts, leads: evaluated } }];\n"
+      },
+      "id": "1de6feee-f9ac-53b8-8654-c7ed25bc6f49",
+      "name": "Timezone Resolution & Business-Hours Evaluation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        160
+      ],
+      "notes": "IANA → phone → country/region → ccTLD → fallback; window + next slot.",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─────────────────────────────────────────────────────────────────────────────\n// Route & Build Dispatch Batches\n// Splits evaluated leads into:\n//   dispatch_now → batches of DISPATCH_BATCH_SIZE for the dispatch webhook\n//   defer        → queue update with scheduled_dispatch_at\n//   hold         → queue update with status \"needs_timezone\" (no dispatch)\n// Only lead_id, contact points, channel, timezone data and the lead's own\n// payload object are forwarded to the sequencer.\n// ─────────────────────────────────────────────────────────────────────────────\nconst cfg = $('Config & Safety Gate').first().json.config;\nconst ev = $input.first().json;\nconst now = ev.leads.filter((l) => l.decision === 'dispatch_now');\nconst batches = [];\nfor (let i = 0; i < now.length; i += cfg.dispatchBatchSize) {\n  const slice = now.slice(i, i + cfg.dispatchBatchSize);\n  batches.push({\n    batchId: `${cfg.runId}-${batches.length + 1}`,\n    leadIds: slice.map((l) => l.leadId),\n    body: {\n      batch_id: `${cfg.runId}-${batches.length + 1}`,\n      generated_at: ev.evaluatedAt,\n      leads: slice.map((l) => ({\n        lead_id: l.leadId, email: l.email, phone: l.phone, channel: l.channel,\n        timezone: l.resolvedTimezone, timezone_method: l.resolution.method, timezone_confidence: l.resolution.confidence,\n        local_time: l.localTime, dispatch_at: l.scheduledDispatchAt, payload: l.payload,\n      })),\n    },\n  });\n}\nconst dispatchAllowed = !cfg.sandboxMode && !cfg.dryRun && cfg.dispatchEnabled;\nreturn [{ json: { ...ev, batches, dispatchAllowed, dispatchCount: now.length } }];\n"
+      },
+      "id": "d2a0b2f3-3ef5-5094-a326-aeada185c3a6",
+      "name": "Route & Build Dispatch Batches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1180,
+        160
+      ],
+      "notes": "dispatch_now batches, defer, hold.",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "92f07974-9481-5437-bc14-63d3207f1a6e",
+              "leftValue": "={{ $json.dispatchAllowed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "15be8d72-8d9c-5e41-bc3a-6a479f70b104",
+              "leftValue": "={{ $json.dispatchCount }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f7f9728b-7de2-5c1b-94bd-634132b9987b",
+      "name": "Dispatch Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// One item per dispatch batch.\nreturn $('Route & Build Dispatch Batches').first().json.batches.map((b) => ({ json: b }));\n"
+      },
+      "id": "d2393911-e337-56e0-a302-8cd57e037cd4",
+      "name": "Emit Dispatch Batches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1620,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DISPATCH_WEBHOOK_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.DISPATCH_API_TOKEN }}"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $json.batchId }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 500
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "b8cd3120-64ed-5658-b7bc-b061096ff3ad",
+      "name": "Dispatch: Send Batch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1840,
+        60
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "notes": "Sequencer / dialer intake. Idempotency-Key = batch id.",
+      "notesInFlow": false,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─────────────────────────────────────────────────────────────────────────────\n// Collect Dispatch Results\n// Joins batch responses by index. A lead counts as dispatched only when its\n// batch call succeeded. Successful lead_ids are remembered for DEDUPE_HOURS\n// (production executions) so a failed queue update can't cause a re-send.\n// ─────────────────────────────────────────────────────────────────────────────\nconst cfg = $('Config & Safety Gate').first().json.config;\nconst batches = $('Emit Dispatch Batches').all();\nconst resp = $input.all();\nif (resp.length !== batches.length) throw new Error(`Dispatch result mismatch: ${batches.length} batches vs ${resp.length} responses. Unpin \"Dispatch: Send Batch\" or align its items.`);\nconst failedResp = (j) => Boolean(j.error) || j.ok === false || j.success === false;\nconst results = batches.map((b, i) => ({ batchId: b.json.batchId, leads: b.json.leadIds.length, ok: !failedResp(resp[i].json), error: failedResp(resp[i].json) ? String(resp[i].json.error?.message || resp[i].json.error || 'dispatch_failed').slice(0, 200) : null }));\nconst dispatched = batches.flatMap((b, i) => (results[i].ok ? b.json.leadIds : []));\nconst failed = batches.flatMap((b, i) => (results[i].ok ? [] : b.json.leadIds));\nlet store = null;\ntry { store = $getWorkflowStaticData('global'); } catch (e) { store = null; }\nif (store && !cfg.sandboxMode && cfg.executionMode === 'production') {\n  store.dispatched = store.dispatched || {};\n  for (const id of dispatched) store.dispatched[id] = Date.now();\n}\nreturn [{ json: { results, dispatched, failed } }];\n"
+      },
+      "id": "d36a7d64-da72-5980-aa03-1a615f067019",
+      "name": "Collect Dispatch Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2060,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─────────────────────────────────────────────────────────────────────────────\n// Build Queue Updates\n// One status record per lead for the queue / CRM:\n//   dispatched      → dispatched_at\n//   scheduled       → scheduled_dispatch_at (+ local time, timezone)\n//   needs_timezone  → held, no dispatch\n//   dispatch_failed → left due, retried next run\n//   ready           → inside the window but dispatch disabled / dry run\n// ─────────────────────────────────────────────────────────────────────────────\nconst cfg = $('Config & Safety Gate').first().json.config;\nconst route = $('Route & Build Dispatch Batches').first().json;\nlet disp = null;\ntry { disp = $('Collect Dispatch Results').isExecuted ? $('Collect Dispatch Results').first().json : null; } catch (e) { disp = null; }\nconst ok = new Set(disp ? disp.dispatched : []);\nconst bad = new Set(disp ? disp.failed : []);\nconst updates = route.leads.map((l) => {\n  const base = { lead_id: l.leadId, timezone: l.resolvedTimezone, timezone_method: l.resolution.method, timezone_confidence: l.resolution.confidence, evaluated_at: route.evaluatedAt };\n  if (l.decision === 'dispatch_now') {\n    if (ok.has(l.leadId)) return { ...base, status: 'dispatched', dispatched_at: new Date().toISOString() };\n    if (bad.has(l.leadId)) return { ...base, status: 'dispatch_failed', scheduled_dispatch_at: l.scheduledDispatchAt };\n    return { ...base, status: 'ready', scheduled_dispatch_at: l.scheduledDispatchAt };\n  }\n  if (l.decision === 'defer') return { ...base, status: 'scheduled', scheduled_dispatch_at: l.scheduledDispatchAt, scheduled_local_time: l.scheduledLocal, defer_reason: l.reason };\n  return { ...base, status: 'needs_timezone', scheduled_dispatch_at: null, hold_reason: l.reason };\n});\nconst queueWriteAllowed = cfg.queueWriteEnabled && updates.length > 0;\nreturn [{ json: { updates, queueWriteAllowed, statusCounts: updates.reduce((a, u) => ({ ...a, [u.status]: (a[u.status] || 0) + 1 }), {}) } }];\n"
+      },
+      "id": "b12af42b-34f7-5a39-b8f0-1a31fa20b3e9",
+      "name": "Build Queue Updates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2280,
+        200
+      ],
+      "notes": "dispatched / scheduled / needs_timezone / dispatch_failed / ready.",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "cfe91490-a349-5246-aea4-88c146f5fe21",
+              "leftValue": "={{ $json.queueWriteAllowed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f61f523d-30bc-5c3f-8bcf-c96d7937578d",
+      "name": "Queue Write?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2500,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QUEUE_UPDATE_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.CRM_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ updates: $json.updates }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "1025ad92-35d1-59cc-bf7d-f2e5336d9b31",
+      "name": "Queue: Update Lead Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2720,
+        120
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "notes": "Writes status + scheduled_dispatch_at back to the queue / CRM.",
+      "notesInFlow": false,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─────────────────────────────────────────────────────────────────────────────\n// Build Notification\n// Slack summary + webhook JSON: dispatched vs. queued vs. held, next scheduled\n// slots, failures. Lead IDs and timezones only; no emails or phone numbers.\n// ─────────────────────────────────────────────────────────────────────────────\nconst cfg = $('Config & Safety Gate').first().json.config;\nconst route = $('Route & Build Dispatch Batches').first().json;\nconst q = $('Build Queue Updates').first().json;\nconst load = $('Load & Normalize Leads').first().json;\nlet disp = null;\ntry { disp = $('Collect Dispatch Results').isExecuted ? $('Collect Dispatch Results').first().json : null; } catch (e) { disp = null; }\nlet qw = null;\ntry { qw = $('Queue: Update Lead Status').isExecuted ? $('Queue: Update Lead Status').all().map((i) => i.json) : null; } catch (e) { qw = null; }\nconst queueFailed = Boolean(qw && qw.some((x) => x.error));\nconst mode = cfg.sandboxMode ? 'SANDBOX (synthetic leads, nothing sent)' : cfg.dryRun ? 'DRY RUN (nothing dispatched)' : !cfg.dispatchEnabled ? 'DISPATCH DISABLED (nothing dispatched)' : 'LIVE';\nconst sc = q.statusCounts;\nconst deferred = route.leads.filter((l) => l.decision === 'defer').sort((a, b) => a.scheduledDispatchAt.localeCompare(b.scheduledDispatchAt));\nconst held = route.leads.filter((l) => l.decision === 'hold');\nconst byTz = {};\nfor (const l of route.leads) if (l.resolvedTimezone) byTz[l.resolvedTimezone] = (byTz[l.resolvedTimezone] || 0) + 1;\n\nconst blocks = [\n  { type: 'header', text: { type: 'plain_text', text: 'Outbound dispatch scheduler', emoji: true } },\n  { type: 'context', elements: [{ type: 'mrkdwn', text: `*${mode}* · window ${cfg.businessStart}–${cfg.businessEnd} local · weekends ${cfg.skipWeekends ? 'skipped' : 'allowed'} · source \\`${load.source}\\`` }] },\n  { type: 'section', text: { type: 'mrkdwn', text: `🚀 *${sc.dispatched || 0}* dispatched · ✅ *${sc.ready || 0}* ready (not sent) · 🕒 *${sc.scheduled || 0}* queued · ⏸️ *${sc.needs_timezone || 0}* held · ❌ *${sc.dispatch_failed || 0}* failed · ${load.rejected.length} rejected` } },\n];\nif (deferred.length) blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `*Next slots*\\n${deferred.slice(0, 10).map((l) => `• \\`${l.leadId}\\` → ${l.scheduledLocal} (${l.resolvedTimezone}, ${l.reason})`).join('\\n')}${deferred.length > 10 ? `\\n…and ${deferred.length - 10} more` : ''}`.slice(0, 2900) } });\nif (held.length) blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `⏸️ *Held, timezone unresolved:* ${held.slice(0, 15).map((l) => `\\`${l.leadId}\\``).join(', ')}` } });\nif (disp && disp.failed.length) blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `❌ *Dispatch failed for* ${disp.failed.length} lead(s): ${disp.results.filter((r) => !r.ok).map((r) => `${r.batchId} (${r.error})`).join('; ')}`.slice(0, 2900) } });\nif (queueFailed) blocks.push({ type: 'section', text: { type: 'mrkdwn', text: '⚠️ *Queue status update failed.* Dispatched leads are protected from re-sending for DEDUPE_HOURS; fix the queue endpoint before then.' } });\nblocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `By timezone: ${Object.entries(byTz).map(([k, v]) => `${k} ${v}`).join(' · ') || '—'} · run ${cfg.runId}`.slice(0, 2900) }] });\n\nconst worthNotifying = (sc.dispatched || 0) > 0 || (sc.dispatch_failed || 0) > 0 || held.length > 0 || queueFailed || cfg.notifyOnEveryRun;\nreturn [{ json: {\n  worthNotifying, queueFailed,\n  slackBody: { text: `Dispatch scheduler: ${sc.dispatched || 0} dispatched, ${sc.scheduled || 0} queued, ${sc.needs_timezone || 0} held (${mode}).`, blocks },\n  webhookBody: { event: 'outbound.dispatch_scheduler.run', runId: cfg.runId, generatedAt: new Date().toISOString(), mode: cfg.sandboxMode ? 'sandbox' : route.dispatchAllowed ? 'live' : 'dry_run',\n    window: route.window, statusCounts: sc, rejected: load.rejected.length,\n    leads: q.updates.map((u) => ({ lead_id: u.lead_id, status: u.status, timezone: u.timezone, timezone_confidence: u.timezone_confidence, scheduled_dispatch_at: u.scheduled_dispatch_at ?? null })),\n    dispatchErrors: disp ? disp.results.filter((r) => !r.ok) : [], queueUpdateFailed: queueFailed },\n} }];\n"
+      },
+      "id": "4457de24-33a1-5e99-b80c-a42d6fb86b1a",
+      "name": "Build Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2940,
+        200
+      ],
+      "notes": "Counts, next slots, holds, failures. No contact data.",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "8f7130e9-a348-5df5-89a3-275fbf20d347",
+              "leftValue": "={{ $json.worthNotifying }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0ec00407-a682-5203-b39c-9ba5fae608eb",
+      "name": "Notify?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3160,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "ddde5bdd-35fe-536b-9b43-841fb18d27b6",
+              "leftValue": "={{ $('Config & Safety Gate').first().json.config.slackEnabled }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9906dd05-c89f-5566-b227-930ecc5538ce",
+      "name": "Slack Enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3380,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Build Notification').first().json.slackBody) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "0cc3eaa9-1170-54cf-b365-047a9f39ae20",
+      "name": "Slack: Post Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3600,
+        60
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "notes": "Slack incoming webhook.",
+      "notesInFlow": false,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "b23b8107-7c57-52e7-ade5-b4879297b2c6",
+              "leftValue": "={{ $('Config & Safety Gate').first().json.config.webhookEnabled }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "650cb128-53f0-55a8-84cc-059485a13f3b",
+      "name": "Webhook Enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3820,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ALERT_WEBHOOK_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.ALERT_WEBHOOK_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Build Notification').first().json.webhookBody) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "8aadc842-c5ce-5ba3-bcc2-763a981f7f13",
+      "name": "Webhook: Post Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4040,
+        60
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "notes": "Generic JSON webhook.",
+      "notesInFlow": false,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ─────────────────────────────────────────────────────────────────────────────\n// Execution Summary & Audit\n// Final record on every path. Lead IDs, timezones and decisions only; contact\n// points are reduced to presence flags. No secrets, no endpoint URLs.\n// ─────────────────────────────────────────────────────────────────────────────\nconst cfg = $('Config & Safety Gate').first().json.config;\nconst one = (n) => { try { return $(n).isExecuted ? $(n).first().json : null; } catch (e) { return null; } };\nconst all = (n) => { try { return $(n).isExecuted ? $(n).all().map((i) => i.json) : []; } catch (e) { return []; } };\nconst load = one('Load & Normalize Leads') || {};\nconst route = one('Route & Build Dispatch Batches');\nconst disp = one('Collect Dispatch Results');\nconst q = one('Build Queue Updates');\nconst qw = all('Queue: Update Lead Status');\nconst sl = all('Slack: Post Summary');\nconst wh = all('Webhook: Post Summary');\n\nlet outcome = 'no_leads';\nif (route) {\n  if (!route.dispatchCount) outcome = route.counts.defer ? 'all_leads_queued' : 'no_dispatchable_leads';\n  else if (cfg.sandboxMode) outcome = 'dispatchable_sandbox';\n  else if (!route.dispatchAllowed) outcome = cfg.dryRun ? 'dispatchable_dry_run' : 'dispatchable_dispatch_disabled';\n  else if (disp && disp.failed.length) outcome = disp.dispatched.length ? 'dispatched_partially' : 'dispatch_failed';\n  else outcome = 'dispatched';\n}\nconst status = (ran, list) => (!ran ? 'not_sent' : list.some((x) => x.error) ? 'failed' : 'sent');\nreturn [{ json: {\n  workflow: 'n8n-outbound-lead-time-zone-optimal-dispatch-scheduler',\n  runId: cfg.runId, executionMode: cfg.executionMode, finishedAt: new Date().toISOString(), outcome,\n  safety: { sandboxMode: cfg.sandboxMode, dryRun: cfg.dryRun, dispatchEnabled: cfg.dispatchEnabled, dispatchAllowed: route ? route.dispatchAllowed : false, queueWriteEnabled: cfg.queueWriteEnabled, evaluationTimeOverride: cfg.nowOverride || null },\n  window: route ? route.window : null,\n  source: load.source || null, webhookAuth: load.auth || null, received: load.received || 0, rejected: load.rejected || [],\n  counts: route ? route.counts : null,\n  statusCounts: q ? q.statusCounts : null,\n  leads: route ? route.leads.map((l) => ({ leadId: l.leadId, hasEmail: Boolean(l.email), hasPhone: Boolean(l.phone), timezone: l.resolvedTimezone, method: l.resolution.method, confidence: l.resolution.confidence, localTime: l.localTime || null, decision: l.decision, reason: l.reason, scheduledDispatchAt: l.scheduledDispatchAt || null })) : [],\n  dispatch: disp ? disp.results : [],\n  queueUpdate: status(qw.length > 0, qw),\n  notifications: { slack: status(sl.length > 0, sl), webhook: status(wh.length > 0, wh) },\n} }];\n"
+      },
+      "id": "fd4910ff-4369-51b8-b77d-8ca924030835",
+      "name": "Execution Summary & Audit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4260,
+        320
+      ],
+      "notes": "Final record on every path.",
+      "notesInFlow": false
+    }
+  ],
+  "connections": {
+    "Inbound Lead Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config & Safety Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Evaluation Schedule": {
+      "main": [
+        [
+          {
+            "node": "Config & Safety Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Test Trigger": {
+      "main": [
+        [
+          {
+            "node": "Config & Safety Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config & Safety Gate": {
+      "main": [
+        [
+          {
+            "node": "From Webhook?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "From Webhook?": {
+      "main": [
+        [
+          {
+            "node": "Load & Normalize Leads",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sandbox Mode?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sandbox Mode?": {
+      "main": [
+        [
+          {
+            "node": "Load & Normalize Leads",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Queue: Fetch Pending Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue: Fetch Pending Leads": {
+      "main": [
+        [
+          {
+            "node": "Load & Normalize Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load & Normalize Leads": {
+      "main": [
+        [
+          {
+            "node": "Has Leads?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Leads?": {
+      "main": [
+        [
+          {
+            "node": "Timezone Resolution & Business-Hours Evaluation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execution Summary & Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Timezone Resolution & Business-Hours Evaluation": {
+      "main": [
+        [
+          {
+            "node": "Route & Build Dispatch Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route & Build Dispatch Batches": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Gate": {
+      "main": [
+        [
+          {
+            "node": "Emit Dispatch Batches",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Queue Updates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emit Dispatch Batches": {
+      "main": [
+        [
+          {
+            "node": "Dispatch: Send Batch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch: Send Batch": {
+      "main": [
+        [
+          {
+            "node": "Collect Dispatch Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Dispatch Results": {
+      "main": [
+        [
+          {
+            "node": "Build Queue Updates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Queue Updates": {
+      "main": [
+        [
+          {
+            "node": "Queue Write?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Write?": {
+      "main": [
+        [
+          {
+            "node": "Queue: Update Lead Status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue: Update Lead Status": {
+      "main": [
+        [
+          {
+            "node": "Build Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Notification": {
+      "main": [
+        [
+          {
+            "node": "Notify?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify?": {
+      "main": [
+        [
+          {
+            "node": "Slack Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execution Summary & Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Enabled?": {
+      "main": [
+        [
+          {
+            "node": "Slack: Post Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Webhook Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack: Post Summary": {
+      "main": [
+        [
+          {
+            "node": "Webhook Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Enabled?": {
+      "main": [
+        [
+          {
+            "node": "Webhook: Post Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execution Summary & Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook: Post Summary": {
+      "main": [
+        [
+          {
+            "node": "Execution Summary & Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {
+    "Queue: Fetch Pending Leads": [
+      {
+        "json": {
+          "leads": [
+            {
+              "lead_id": "lead_id_1001",
+              "first_name": "Alex",
+              "email": "alex.rivera@example.com",
+              "phone": "+1-202-555-0148",
+              "channel": "email",
+              "payload": {
+                "sequence_id": "seq_demo_01"
+              },
+              "status": "pending"
+            },
+            {
+              "lead_id": "lead_id_1002",
+              "first_name": "Jordan",
+              "email": "jordan.lee@example.com",
+              "phone": "+1 (415) 555-0123",
+              "channel": "phone",
+              "payload": {
+                "sequence_id": "seq_demo_01"
+              },
+              "status": "pending"
+            },
+            {
+              "lead_id": "lead_id_1003",
+              "first_name": "Priya",
+              "email": "priya.shah@example.co.uk",
+              "phone": "+44-20-7946-0921",
+              "channel": "email",
+              "payload": {
+                "sequence_id": "seq_demo_02"
+              },
+              "status": "pending"
+            },
+            {
+              "lead_id": "lead_id_1004",
+              "first_name": "Sam",
+              "email": "sam.taylor@example.com.au",
+              "phone": "+61 2 5550 1234",
+              "channel": "email",
+              "payload": {
+                "sequence_id": "seq_demo_02"
+              },
+              "status": "pending"
+            },
+            {
+              "lead_id": "lead_id_1005",
+              "first_name": "Morgan",
+              "email": "morgan.quinn@example.com",
+              "channel": "email",
+              "payload": {
+                "sequence_id": "seq_demo_03"
+              },
+              "status": "pending"
+            },
+            {
+              "lead_id": "lead_id_1006",
+              "first_name": "Kenji",
+              "email": "kenji.sato@example.com",
+              "timezone": "Asia/Tokyo",
+              "channel": "email",
+              "payload": {
+                "sequence_id": "seq_demo_03"
+              },
+              "status": "pending"
+            },
+            {
+              "lead_id": "lead_id_1007",
+              "first_name": "Lena",
+              "email": "lena.vogel@example.de",
+              "timezone": "Mars/Olympus_Mons",
+              "channel": "email",
+              "payload": {
+                "sequence_id": "seq_demo_03"
+              },
+              "status": "pending"
+            },
+            {
+              "lead_id": "lead_id_1008",
+              "first_name": "Casey",
+              "email": "casey.brooks@example.com",
+              "phone": "+1-999-555-0100",
+              "country": "US",
+              "region": "CO",
+              "channel": "phone",
+              "payload": {
+                "sequence_id": "seq_demo_04"
+              },
+              "status": "pending"
+            },
+            {
+              "lead_id": "lead_id_1009",
+              "first_name": "Noor",
+              "email": "noor.haddad@example.com",
+              "country": "SA",
+              "channel": "email",
+              "payload": {
+                "sequence_id": "seq_demo_04"
+              },
+              "status": "pending"
+            },
+            {
+              "lead_id": "lead_id_1010",
+              "first_name": "Riley",
+              "email": "riley.ford@example.com",
+              "phone": "+1-312-555-0177",
+              "channel": "email",
+              "do_not_contact": true,
+              "payload": {
+                "sequence_id": "seq_demo_04"
+              },
+              "status": "pending"
+            },
+            {
+              "lead_id": "lead_id_1001",
+              "first_name": "Alex",
+              "email": "alex.rivera@example.com",
+              "phone": "+1-202-555-0148",
+              "channel": "email",
+              "payload": {
+                "sequence_id": "seq_demo_01"
+              },
+              "status": "pending"
+            },
+            {
+              "first_name": "NoId",
+              "email": "no.id@example.com",
+              "channel": "email",
+              "status": "pending"
+            }
+          ],
+          "next_cursor": null
+        }
+      }
+    ],
+    "Dispatch: Send Batch": [
+      {
+        "json": {
+          "accepted": true,
+          "batch_id": "synthetic-batch-1",
+          "queued": 4
+        }
+      }
+    ],
+    "Queue: Update Lead Status": [
+      {
+        "json": {
+          "ok": true,
+          "updated": 9
+        }
+      }
+    ],
+    "Slack: Post Summary": [
+      {
+        "json": {
+          "data": "ok"
+        }
+      }
+    ],
+    "Webhook: Post Summary": [
+      {
+        "json": {
+          "received": true
+        }
+      }
+    ]
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "UTC",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveExecutionProgress": false,
+    "callerPolicy": "workflowsFromSameOwner",
+    "executionTimeout": 900
+  },
+  "versionId": "55461d93-414b-53b3-8f39-2eb3a823a396",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}
