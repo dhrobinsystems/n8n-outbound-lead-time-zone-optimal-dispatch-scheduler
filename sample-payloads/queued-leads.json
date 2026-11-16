@@ -1,0 +1,122 @@
+{
+  "_comment": "Synthetic fixture. All names, emails, phone numbers and IDs are fictitious; phone numbers use ranges reserved for fiction (NANP 555-01xx, UK 020 7946 0xxx, AU 02 5550 xxxx). Shape documented in README \u00a78.2.",
+  "leads": [
+    {
+      "lead_id": "lead_id_1001",
+      "first_name": "Alex",
+      "email": "alex.rivera@example.com",
+      "phone": "+1-202-555-0148",
+      "channel": "email",
+      "payload": {
+        "sequence_id": "seq_demo_01"
+      }
+    },
+    {
+      "lead_id": "lead_id_1002",
+      "first_name": "Jordan",
+      "email": "jordan.lee@example.com",
+      "phone": "+1 (415) 555-0123",
+      "channel": "phone",
+      "payload": {
+        "sequence_id": "seq_demo_01"
+      }
+    },
+    {
+      "lead_id": "lead_id_1003",
+      "first_name": "Priya",
+      "email": "priya.shah@example.co.uk",
+      "phone": "+44-20-7946-0921",
+      "channel": "email",
+      "payload": {
+        "sequence_id": "seq_demo_02"
+      }
+    },
+    {
+      "lead_id": "lead_id_1004",
+      "first_name": "Sam",
+      "email": "sam.taylor@example.com.au",
+      "phone": "+61 2 5550 1234",
+      "channel": "email",
+      "payload": {
+        "sequence_id": "seq_demo_02"
+      }
+    },
+    {
+      "lead_id": "lead_id_1005",
+      "first_name": "Morgan",
+      "email": "morgan.quinn@example.com",
+      "channel": "email",
+      "payload": {
+        "sequence_id": "seq_demo_03"
+      }
+    },
+    {
+      "lead_id": "lead_id_1006",
+      "first_name": "Kenji",
+      "email": "kenji.sato@example.com",
+      "timezone": "Asia/Tokyo",
+      "channel": "email",
+      "payload": {
+        "sequence_id": "seq_demo_03"
+      }
+    },
+    {
+      "lead_id": "lead_id_1007",
+      "first_name": "Lena",
+      "email": "lena.vogel@example.de",
+      "timezone": "Mars/Olympus_Mons",
+      "channel": "email",
+      "payload": {
+        "sequence_id": "seq_demo_03"
+      }
+    },
+    {
+      "lead_id": "lead_id_1008",
+      "first_name": "Casey",
+      "email": "casey.brooks@example.com",
+      "phone": "+1-999-555-0100",
+      "country": "US",
+      "region": "CO",
+      "channel": "phone",
+      "payload": {
+        "sequence_id": "seq_demo_04"
+      }
+    },
+    {
+      "lead_id": "lead_id_1009",
+      "first_name": "Noor",
+      "email": "noor.haddad@example.com",
+      "country": "SA",
+      "channel": "email",
+      "payload": {
+        "sequence_id": "seq_demo_04"
+      }
+    },
+    {
+      "lead_id": "lead_id_1010",
+      "first_name": "Riley",
+      "email": "riley.ford@example.com",
+      "phone": "+1-312-555-0177",
+      "channel": "email",
+      "do_not_contact": true,
+      "payload": {
+        "sequence_id": "seq_demo_04"
+      }
+    },
+    {
+      "lead_id": "lead_id_1001",
+      "first_name": "Alex",
+      "email": "alex.rivera@example.com",
+      "phone": "+1-202-555-0148",
+      "channel": "email",
+      "payload": {
+        "sequence_id": "seq_demo_01"
+      }
+    },
+    {
+      "first_name": "NoId",
+      "email": "no.id@example.com",
+      "channel": "email"
+    }
+  ]
+}
