@@ -52,6 +52,8 @@ I built this scheduler to decide per lead. It works out each recipient's timezon
 
 ## 2. Architecture and Data Flow
 
+![Workflow Overview](workflow-overview.png)
+
 ```mermaid
 flowchart LR
     WH[Inbound Lead Webhook<br/>POST /outbound/leads/schedule] --> CFG
